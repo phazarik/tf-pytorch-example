@@ -1,8 +1,9 @@
+#!/usr/bin/env python3
 #--------------------------------------------------------------------
-# This is a simple PyTorch-based DNN trainer script that
-# - Reads into text file containing physics-processes.
-# - Classifies between two classes of physics-processes: WZ and ZZ
-# - Input dataset: rows = events, columns: properties of each event
+# This is a simple TensorFlow-based DNN trainer script that
+# - Reads into text files containing physics-processes.
+# - classifies between two classes of physics-processes: WZ and ZZ
+# - input dataset: rows = events, columns: properites of each event
 #                                                       - Prachurjya
 #--------------------------------------------------------------------
 
@@ -19,11 +20,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_curve,auc, accuracy_score
 from sklearn.inspection import permutation_importance
 
-## PyTorch modules
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
+## tensorflow modules
+import tensorflow as tf
+from tensorflow import keras
+from keras.callbacks import EarlyStopping
+from keras import layers
 
 ## ANSI colors for decoration
 RESET  = "\033[0m"
@@ -33,39 +34,39 @@ YELLOW = "\033[33m"
 YELLOW_BOLD = "\033[1;33m"
 
 def main():
-    
-    modelname = "pytorch-DNN"
-    os.makedirs(f"trained_models/{modelname}", exist_ok=True)
 
+    modelname = "tensorflow-DNN"
+    os.makedirs(f"trained_models/{modelname}", exist_ok=True)
+    
     ## ----------------------------------------------------------------------------
     ##                          HANDLING INPUT FILES
     ## ----------------------------------------------------------------------------
     time_start = time.time()
     time_buffer = time.time()
-
+    
     ## Read the files and give them truth information.
-    df_wz = read_txt_into_df("input_datasets/input_WZ.txt", truth=0)
-    df_zz = read_txt_into_df("input_datasets/input_ZZ.txt", truth=1)
+    df_wz = read_txt_into_df("input_datasets/input_WZ.txt", truth=0) ## signal
+    df_zz = read_txt_into_df("input_datasets/input_ZZ.txt", truth=1) ## background
 
     ## Combine the dataframes and randomize the rows.
     df = pd.concat([df_wz, df_zz], ignore_index=True)
     df = df.sample(frac=1).reset_index(drop=True)
     print(f"\n{YELLOW}Dataframe ready!{RESET}")
     print(df)
-    
+
     print(f"Time Taken to read dataframe = {CYAN}{timedelta(seconds=int(time.time()-time_buffer))}{RESET}")
     time_buffer = time.time() ## Reseting the buffer
-
+    
     ## Plot the input variables beforehand to see which ones are good.
     ## Then pick the input variables.
-    train_var = ["var0","var1","var2","var3","var4","var5","var6","var7","var8","var9","var10","var11"]
+    train_var = ["var0", "var1", "var2", "var3", "var4", "var5", "var6", "var7", "var8", "var9", "var10", "var11"]
 
     ## ----------------------------------------------------------------------------
     ##                 Preparing numpy arrays and min-max scaling
     ## ----------------------------------------------------------------------------
-
+    
     ## Split the df into two parts
-    df_train, df_test = train_test_split(df, test_size=0.3, stratify=df['truth'])
+    df_train, df_test = train_test_split(df, test_size=0.3, stratify=df['truth']) ## from sklearn
     nsig_train = len(df_train.query('truth == 1'))
     nsig_test  = len(df_test.query('truth == 1'))
     nbkg_train = len(df_train.query('truth == 0'))
@@ -76,16 +77,16 @@ def main():
 
     ## Convert these dfs into numpy arrays that go into the training and testing.
     ## X = input features, y = truth labels
-    X_train = df_train[train_var].values.astype(np.float32)
-    y_train = df_train['truth'].values.astype(np.float32)
-    X_test  = df_test[train_var].values.astype(np.float32)
-    y_test  = df_test['truth'].values.astype(np.float32)
-
+    X_train= df_train[train_var].values
+    y_train= df_train['truth'].values
+    X_test = df_test[train_var].values
+    y_test = df_test['truth'].values
+    
     ## Find min-max of the train array and keep them as text files.
     ## Saving into text files is important for future-use.
     print(f"\n{YELLOW}min-max scaling of input features:{RESET}")
     FindMinMax(X_train, modelname)
-
+    
     ## Scale the train and test arrays using these min-max values from the text files.
     X_train = ApplyMinMax(X_train, f'trained_models/{modelname}/scaling_parameters_min.txt', f'trained_models/{modelname}/scaling_parameters_max.txt')
     X_test  = ApplyMinMax(X_test,  f'trained_models/{modelname}/scaling_parameters_min.txt', f'trained_models/{modelname}/scaling_parameters_max.txt')
@@ -94,10 +95,9 @@ def main():
     ## ----------------------------------------------------------------------------
     ##                        Defining and training the DNN
     ## ----------------------------------------------------------------------------
-    
+
     n_features = X_train.shape[1]
-    epochs_ = 30
-    batch_ = 512
+    epochs_, batch_ = 30, 512
 
     ## Rule of thumb:
     ## - Larger batch size:
@@ -114,162 +114,122 @@ def main():
     ## - Batch size: 256–1024 (512 is a reasonable middle ground)
     ## - Epochs: 20–50 (monitor validation loss for early stopping)
     ## - Use EarlyStopping to avoid over-training
+    
+    model = keras.Sequential([
+        layers.Input(shape=(n_features,)),
+        layers.Dense(64, activation='relu'),
+        layers.Dense(32, activation='relu'),
+        layers.Dense(1, activation='sigmoid')
+    ])
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-     
-    class DNNModel(nn.Module):
-        def __init__(self, n_features):
-            super().__init__()
-            self.layers = nn.Sequential(
-                nn.Linear(n_features, 64),
-                nn.ReLU(),
-                nn.Linear(64, 32),
-                nn.ReLU(),
-                nn.Linear(32,1),
-                nn.Sigmoid()
-            )
-        def forward(self, x):
-            return self.layers(x)
-        
+    model.compile(
+        optimizer=keras.optimizers.Adam(),
+        loss='binary_crossentropy',
+        metrics=['accuracy']
+    )
 
-    model = DNNModel(n_features).to(device)
-    criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters())
-
-    train_dataset = TensorDataset(torch.from_numpy(X_train), torch.from_numpy(y_train))
-    test_dataset  = TensorDataset(torch.from_numpy(X_test),  torch.from_numpy(y_test))
-    train_loader = DataLoader(train_dataset, batch_size=batch_, shuffle=True)
-    test_loader  = DataLoader(test_dataset, batch_size=batch_, shuffle=False)
-
+    ## Training (might take some time)
     print(f'\n{YELLOW}Starting the training!{RESET}')
-    time_buffer = time.time()
-    history = {'loss':[], 'accuracy':[], 'val_loss':[], 'val_accuracy':[]}
+    time_buffer = time.time() ## Reseting the buffer
+    history = model.fit(
+        X_train, y_train,
+        epochs=epochs_,
+        batch_size=batch_,
+        validation_data=(X_test, y_test),
+        verbose=1,
+        callbacks=[] ## Put EarlyStopping here if needed
+    )
 
-    for epoch in range(1, epochs_+1):
-        model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
-        for X_batch, y_batch in train_loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device).unsqueeze(1)
-            optimizer.zero_grad()
-            y_pred = model(X_batch)
-            loss = criterion(y_pred, y_batch)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item() * X_batch.size(0)
-            correct += ((y_pred>0.5).float() == y_batch).sum().item()
-            total += y_batch.size(0)
-        train_loss = running_loss / total
-        train_acc = correct / total
-
-        ## Validation
-        model.eval()
-        val_loss_total = 0.0
-        val_correct = 0
-        val_total = 0
-        with torch.no_grad():
-            for X_batch, y_batch in test_loader:
-                X_batch, y_batch = X_batch.to(device), y_batch.to(device).unsqueeze(1)
-                y_pred = model(X_batch)
-                loss = criterion(y_pred, y_batch)
-                val_loss_total += loss.item() * X_batch.size(0)
-                val_correct += ((y_pred>0.5).float() == y_batch).sum().item()
-                val_total += y_batch.size(0)
-        val_loss = val_loss_total / val_total
-        val_acc  = val_correct / val_total
-
-        history['loss'].append(train_loss)
-        history['accuracy'].append(train_acc)
-        history['val_loss'].append(val_loss)
-        history['val_accuracy'].append(val_acc)
-        print(f"Epoch {epoch:02d}/{epochs_} - loss: {train_loss:.4f} - acc: {train_acc:.4f} - val_loss: {val_loss:.4f} - val_acc: {val_acc:.4f}")
-
-    modelfile = f'trained_models/{modelname}/model_{modelname}.pt'
-    torch.save(model.state_dict(), modelfile)
+    modelfile = f'trained_models/{modelname}/model_{modelname}.keras'
+    model.save(modelfile)
     print(f'Success!\nFile created: {YELLOW_BOLD}{modelfile}{RESET}')
-
+    
     ## ----------------------------------------------------------------------------
     ##                        Plotting loss and accuracy 
     ## ----------------------------------------------------------------------------
+
     fig, ax = plt.subplots(1, 2, figsize=(8, 4))
-    epochs_run = len(history['loss'])
-    
+    epochs_run = len(history.history['loss'])
+
     # Subplot 1: accuracy vs epoch
-    ax[0].plot(range(1, epochs_run + 1), history['accuracy'],     label='Train Accuracy')
-    ax[0].plot(range(1, epochs_run + 1), history['val_accuracy'], label='Val Accuracy')
+    ax[0].plot(range(1, epochs_run + 1), history.history['accuracy'],     label='Train Accuracy')
+    ax[0].plot(range(1, epochs_run + 1), history.history['val_accuracy'], label='Val Accuracy')
     ax[0].set_xlabel('Epoch')
-    ax[0].set_xlim(1, epochs_run)
+    ax[0].set_xlim(0, epochs_run)
     ax[0].set_ylabel('Accuracy')
-    ax[0].set_title('Accuracy vs Epoch', fontsize=10)
+    ax[0].set_title('Accuracy-vs-Epoch', fontsize=10)
     ax[0].legend(loc='best')
     
     # Subplot 2: loss vs epoch
-    ax[1].plot(range(1, epochs_run + 1), history['loss'],     label='Train Loss')
-    ax[1].plot(range(1, epochs_run + 1), history['val_loss'], label='Val Loss')
+    ax[1].plot(range(1, epochs_run + 1), history.history['loss'],     label='Train Loss')
+    ax[1].plot(range(1, epochs_run + 1), history.history['val_loss'], label='Val Loss')
     ax[1].set_xlabel('Epoch')
-    ax[1].set_xlim(1, epochs_run)
+    ax[1].set_xlim(0, epochs_run)
     ax[1].set_ylabel('Loss')
     ax[1].set_yscale('log')
-    ax[1].set_title('Loss vs Epoch', fontsize=10)
     ax[1].legend(loc='best')
-
+    ax[1].set_title('Loss-vs-Epoch', fontsize=10)
+    
     fig.suptitle(modelname, fontsize=12)
-    plt.tight_layout()
 
-    figname_loss = f"trained_models/{modelname}/loss-and-accuracy.png"
+    plt.tight_layout()
+    figname_loss = f'trained_models/{modelname}/loss-and-accuracy.png'
     plt.savefig(figname_loss)
     print(f"File created: {YELLOW_BOLD}{figname_loss}{RESET}")
-    
+
     print(f"Time Taken to train the network = {CYAN}{timedelta(seconds=int(time.time()-time_buffer))}{RESET}")
     time_buffer = time.time() ## Reseting the buffer
-
+    
     ## ----------------------------------------------------------------------------
     ##                     Use the trained model to predict
     ## ----------------------------------------------------------------------------
-    
-    model.eval()
-    with torch.no_grad():
-        y_pred_train = model(torch.from_numpy(X_train).to(device)).cpu().numpy().flatten()
-        y_pred_test  = model(torch.from_numpy(X_test).to(device)).cpu().numpy().flatten()
 
-    df_train['score'] = y_pred_train
-    df_test['score']  = y_pred_test
+    print(f"\n{YELLOW}Trying to predict the truth using the trained model:{RESET}")
+    y_predicted_train = model.predict(X_train)
+    y_predicted_test  = model.predict(X_test)
 
-    fpr, tpr, _ = roc_curve(y_test, y_pred_test)
+    ## Add the predicted labels as "score" in the dfs to compare against "truth"
+    df_train['score'] = y_predicted_train
+    df_test['score']  = y_predicted_test
+
+    ## ROC information for the test dataset
+    fpr, tpr, _ = roc_curve(y_test, y_predicted_test)
     auc_score = auc(tpr,1-fpr)
-    tpr *= 100
-    fnr = (1-fpr)*100
-
-    fpr1, tpr1, _ = roc_curve(y_train, y_pred_train)
+    tpr=tpr*100
+    fnr=(1-fpr)*100
+    
+    ## ROC information for training data
+    fpr1, tpr1, _ = roc_curve(y_train, y_predicted_train)
     auc_score1 = auc(tpr1,1-fpr1)
-    tpr1 *= 100
-    fnr1 = (1-fpr1)*100
+    tpr1=tpr1*100
+    fnr1=(1-fpr1)*100
 
     ## ----------------------------------------------------------------------------
     ##                        Plot the DNN-score and ROC
     ## ----------------------------------------------------------------------------
-    
-    mybins = np.arange(0,1.02,0.02)
+
+    mybins = np.arange(0, 1.02, 0.02)
     density_ = False
     train_scores_sig, bins_sig_train, weights_sig_train, counts_sig_train, errors_sig_train = extract_plot(df_train, 1, mybins, density_)
     train_scores_bkg, bins_bkg_train, weights_bkg_train, counts_bkg_train, errors_bkg_train = extract_plot(df_train, 0, mybins, density_)
-    test_scores_sig, bins_sig_test, weights_sig_test, counts_sig_test, errors_sig_test = extract_plot(df_test, 1, mybins, density_)
-    test_scores_bkg, bins_bkg_test, weights_bkg_test, counts_bkg_test, errors_bkg_test = extract_plot(df_test, 0, mybins, density_)
+    test_scores_sig, bins_sig_test, weights_sig_test, counts_sig_test, errors_sig_test =      extract_plot(df_test,  1, mybins, density_)
+    test_scores_bkg, bins_bkg_test, weights_bkg_test, counts_bkg_test, errors_bkg_test =      extract_plot(df_test,  0, mybins, density_)
+    print('ROC values loaded.')
 
-    fig, ax = plt.subplots(1,2, figsize=(8,4))
-    decorate_hist = {'bins':mybins, 'histtype':'step','linewidth':1.5,'density':density_,'log':False,'alpha':1.0}
-    decorate_point={'marker':'o','markersize':3,'linestyle':''}
+    fig, ax = plt.subplots(1, 2, figsize=(8, 4))
+    decorate_hist = {'bins':mybins, 'histtype':'step', 'linewidth':1.5, 'density': density_, 'log': False, 'alpha':1.0}
+    decorate_point ={'marker':'o',  'markersize':3,    'linestyle':''}
 
     if density_:
         ax[0].hist(train_scores_sig, color='xkcd:greenish', label=f'Train Sig [{len(train_scores_sig)}]', alpha=0.3, bins=mybins, density=density_)
         ax[0].hist(train_scores_bkg, color='xkcd:sky blue', label=f'Train Bkg [{len(train_scores_bkg)}]', alpha=0.3, bins=mybins, density=density_)
         ax[0].hist(test_scores_sig,  color='xkcd:green', label=f'Test Sig [{len(test_scores_sig)}]', **decorate_hist)
-        ax[0].hist(test_scores_bkg,  color='xkcd:blue',  label=f'Test Bkg [{len(test_scores_bkg)}]', **decorate_hist)
+        ax[0].hist(test_scores_bkg,  color='xkcd:blue',  label=f'Test Bkg [{len(test_scores_bkg)}]',**decorate_hist)
+        
     else:
         ## Calculate the scaling factors to normalize train histograms to match test integrals
-        scale_factor_sig = np.sum(counts_sig_test)/np.sum(counts_sig_train) if np.sum(counts_sig_train)>0 else 1
-        scale_factor_bkg = np.sum(counts_bkg_test)/np.sum(counts_bkg_train) if np.sum(counts_bkg_train)>0 else 1
+        scale_factor_sig = np.sum(counts_sig_test)/np.sum(counts_sig_train) if np.sum(counts_sig_train) > 0 else 1
+        scale_factor_bkg = np.sum(counts_bkg_test)/np.sum(counts_bkg_train) if np.sum(counts_bkg_train) > 0 else 1
 
         ## Make train plots, normalized to match test histogram integrals
         ax[0].hist(train_scores_sig, color='xkcd:greenish', label=f'Train Sig [{len(train_scores_sig)}]', 
@@ -297,32 +257,32 @@ def main():
     ax[0].legend(loc='best')
     
     ax[1].plot(tpr, fnr, color='xkcd:denim blue', label='Training ROC (AUC = %0.4f)' % auc_score)
-    ax[1].plot(tpr1, fnr1, color='xkcd:sky blue', label='Testing ROC (AUC = %0.4f)' % auc_score1)
+    ax[1].plot(tpr1,fnr1,color='xkcd:sky blue',   label='Testing ROC  (AUC = %0.4f)'  % auc_score1)
     ax[1].set_xlabel('Signal efficiency (%)')
     ax[1].set_ylabel('Background rejection (%)')
     ax[1].legend(loc='best', fontsize=8)
     
     fig.suptitle(modelname, fontsize=12)
-
+    
     plt.tight_layout()
     figname_nnscore = f"trained_models/{modelname}/performance.png"
     plt.savefig(figname_nnscore)
     print(f"File created: {YELLOW_BOLD}{figname_nnscore}{RESET}")
 
-    ## Optional: feature importance using sklearn permutation_importance
-    time_buffer = time.time()
+    ## Optional, takes longer time:
+    time_buffer = time.time() ## Reseting the buffer
     result = get_feature_importance(model, X_test, y_test, working_point=0.5, iterations=30)
     plot_feature_importance(result, modelname, train_var)
+
     print(f"Time Taken to calculate feature importance = {CYAN}{timedelta(seconds=int(time.time()-time_buffer))}{RESET}")
     print("\nDone!")
     time_end = time.time()
-    print(f"Total runtime = {CYAN}{timedelta(seconds=int(time_end-time_start))}{RESET}\n")
+    print(f"Toral runtime = {CYAN}{timedelta(seconds=int(time_end-time_start))}{RESET}\n")
 
 ################################################################################################
 ##                                   UTILITY FUNCTIONS                                        ##
 ################################################################################################
-# Use the same: read_txt_into_df, FindMinMax, ApplyMinMax, extract_plot, plot_feature_importance
-
+    
 # ----- Read space-separated txt file into pandas df -----
 def read_txt_into_df(txtfile, truth):
     df = pd.DataFrame()
@@ -372,33 +332,16 @@ def extract_plot(df_, truth_, mybins, density_):
     return scores_, bins_, weights_, counts_, errors_
 
 # ----- Optional: Checking feature importance -----
-from sklearn.base import BaseEstimator, ClassifierMixin
-class SklearnWrapper(BaseEstimator, ClassifierMixin):
-    def __init__(self, model, device='cpu', nncut=0.5):
-        self.model = model
-        self.device = device
-        self.nncut = nncut
+def get_feature_importance(model, X_test, y_test, working_point=0.5, iterations=10):
 
-    def fit(self, X, y):
-        return self  # model is already trained
-
-    def predict(self, X):
-        self.model.eval()
-        X_tensor = torch.from_numpy(X).float().to(self.device)
-        with torch.no_grad():
-            y_pred = self.model(X_tensor).cpu().numpy().flatten()
-        return (y_pred > self.nncut).astype(int)
-
-def get_feature_importance(model, X_test, y_test, working_point=0.5, iterations=30):
     from tqdm import tqdm
     import io
+    from functools import partial
     from contextlib import redirect_stdout, redirect_stderr
     import logging
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
     logging.getLogger("tensorflow").setLevel(logging.ERROR)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    wrapped_model = SklearnWrapper(model, device=device, nncut=working_point)
+    tf.get_logger().setLevel('ERROR')
 
     N = min(5000, len(X_test))
     X_eval = X_test[:N]
@@ -409,16 +352,25 @@ def get_feature_importance(model, X_test, y_test, working_point=0.5, iterations=
     pbar = tqdm(total=total_permutations, desc="Processing", unit="iter",
                 colour="green", ncols=100, leave=True,
                 bar_format="{l_bar}{bar}| [{elapsed} < {remaining}, {n_fmt}/{total_fmt}]")
+    keras_accuracy = partial(keras_accuracy_base, nncut=working_point, pbar=pbar)
 
+    ## Suppress internal prints from sklearn/joblib/TensorFlow
     f = io.StringIO()
     with redirect_stdout(f), redirect_stderr(f):
         result = permutation_importance(
-            wrapped_model, X_eval, y_eval,
-            n_repeats=iterations, scoring='accuracy',
+            model, X_eval, y_eval,
+            n_repeats=iterations, scoring=keras_accuracy,
             random_state=42, n_jobs=1
         )
     pbar.close()
     return result
+
+def keras_accuracy_base(model, X, y, nncut, pbar):
+    y_pred = model.predict(X, verbose=0)
+    y_pred_classes = (y_pred > nncut).astype(int).flatten()
+    acc = accuracy_score(y, y_pred_classes)
+    pbar.update(1)
+    return acc
 
 def plot_feature_importance(result, modelname, train_var):
     importance_scores = result.importances_mean
@@ -443,6 +395,6 @@ def plot_feature_importance(result, modelname, train_var):
     figname_importance = f'trained_models/{modelname}/feature_importance.png'
     plt.savefig(figname_importance, bbox_inches='tight')  ## Save with tight bounding box
     print(f"File created: {YELLOW_BOLD}{figname_importance}{RESET}")
-
+    
 # ----- EXECUTION -----
 if __name__=="__main__": main()

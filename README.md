@@ -34,8 +34,8 @@ Alternatively, you can install the `dnn_environment.yaml` file. The total size t
 ├── input_datasets
 │   ├── input_WZ.txt          # WZ event data
 │   └── input_ZZ.txt          # ZZ event data
-├── pytorch_DNN_train.py      # PyTorch DNN script
-├── tensorflow_DNN_train.py   # TensorFlow DNN script
+├── train_pytorch_DNN.py      # PyTorch DNN script
+├── train_tensorflow_DNN.py   # TensorFlow DNN script
 └── trained_models            # Saved models and performance plots
 ```
 `trained_models` is automatically created during training. Stores trained model weights and performance plots. 
@@ -43,11 +43,11 @@ Alternatively, you can install the `dnn_environment.yaml` file. The total size t
 ## ▶️ Running the example scripts
 TensorFlow/Keras version
 ```bash
-python3 tensorflow_DNN_train.py
+python3 train_tensorflow_DNN.py
 ```
 PyTorch version
 ```bash
-pytorch_DNN_train.py
+python3 train_pytorch_DNN.py
 ```
 
 
