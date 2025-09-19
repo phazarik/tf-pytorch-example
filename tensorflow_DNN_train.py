@@ -14,16 +14,16 @@ import math
 import time
 from datetime import timedelta
 
+## sklearn for handling ROC etc.
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_curve,auc, accuracy_score
+from sklearn.inspection import permutation_importance
+
 ## tensorflow modules
 import tensorflow as tf
 from tensorflow import keras
 from keras.callbacks import EarlyStopping
 from keras import layers
-
-## sklearn for handling ROC etc.
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_curve,auc, accuracy_score
-from sklearn.inspection import permutation_importance
 
 ## ANSI colors for decoration
 RESET  = "\033[0m"
@@ -227,8 +227,8 @@ def main():
         
     else:
         ## Calculate the scaling factors to normalize train histograms to match test integrals
-        scale_factor_sig = np.sum(counts_sig_test) / np.sum(counts_sig_train) if np.sum(counts_sig_train) > 0 else 1
-        scale_factor_bkg = np.sum(counts_bkg_test) / np.sum(counts_bkg_train) if np.sum(counts_bkg_train) > 0 else 1
+        scale_factor_sig = np.sum(counts_sig_test)/np.sum(counts_sig_train) if np.sum(counts_sig_train) > 0 else 1
+        scale_factor_bkg = np.sum(counts_bkg_test)/np.sum(counts_bkg_train) if np.sum(counts_bkg_train) > 0 else 1
 
         ## Make train plots, normalized to match test histogram integrals
         ax[0].hist(train_scores_sig, color='xkcd:greenish', label=f'Train Sig [{len(train_scores_sig)}]', 
